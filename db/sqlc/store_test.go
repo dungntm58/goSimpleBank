@@ -4,15 +4,31 @@ import (
 	"context"
 	"testing"
 
+	"github.com/dungntm58/goSimpleBank/util"
 	"github.com/stretchr/testify/require"
 )
 
+func createRandomAccountWithFixedBalance(balance int64, currency string) (CreateAccountParams, Account, error) {
+	arg := CreateAccountParams{
+		Owner:    util.RandomOwner(),
+		Balance:  balance,
+		Currency: currency,
+	}
+
+	account, err := testQueries.CreateAccount(context.Background(), arg)
+	return arg, account, err
+}
+
 func TestTransferTx(t *testing.T) {
 	store := NewStore(testDB)
-	_, acc1, err := createRandomAccount()
+
+	balance := int64(300)
+	currency := util.RandomCurrency()
+
+	_, acc1, err := createRandomAccountWithFixedBalance(balance, currency)
 	require.NoError(t, err)
 
-	_, acc2, err := createRandomAccount()
+	_, acc2, err := createRandomAccountWithFixedBalance(balance, currency)
 	require.NoError(t, err)
 
 	n := 5
@@ -34,6 +50,7 @@ func TestTransferTx(t *testing.T) {
 		}()
 	}
 
+	existed := make(map[int]bool)
 	for i := 0; i < n; i++ {
 		err := <-errs
 		require.NoError(t, err)
@@ -72,6 +89,34 @@ func TestTransferTx(t *testing.T) {
 		_, err = store.GetEntry(context.Background(), toEntry.ID)
 		require.NoError(t, err)
 
-		// TODO: test accounts' balance
+		// check accounts
+		fromAccount := res.FromAccount
+		require.NotEmpty(t, fromAccount)
+		require.Equal(t, fromAccount.ID, acc1.ID)
+
+		toAccount := res.ToAccount
+		require.NotEmpty(t, toAccount)
+		require.Equal(t, toAccount.ID, acc2.ID)
+
+		diff1 := acc1.Balance - fromAccount.Balance
+		diff2 := toAccount.Balance - acc2.Balance
+		require.Equal(t, diff1, diff2)
+		require.True(t, diff1 > 0)
+		require.True(t, diff1%amount == 0)
+
+		k := int(diff1 / amount)
+		require.True(t, k >= 1 && k <= n)
+		require.NotContains(t, existed, k)
+		existed[k] = true
 	}
+
+	// check the final accounts' balances
+	updatedAcc1, err := testQueries.GetAccount(context.Background(), acc1.ID)
+	require.NoError(t, err)
+
+	updatedAcc2, err := testQueries.GetAccount(context.Background(), acc2.ID)
+	require.NoError(t, err)
+
+	require.Equal(t, acc1.Balance-int64(n)*amount, updatedAcc1.Balance)
+	require.Equal(t, acc2.Balance+int64(n)*amount, updatedAcc2.Balance)
 }
